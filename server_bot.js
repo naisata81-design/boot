@@ -154,7 +154,7 @@ const notificarServer2 = async (mensaje) => {
     }
 };
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     // Conectar a Mongo al iniciar
     connectDB();
 
