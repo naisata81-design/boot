@@ -76,7 +76,7 @@ app.post('/api/bot/humanize', verifyToken, async (req, res) => {
     try {
         const personalidad = `Eres el asistente del sistema Naisata CRM. Hablas relajado y natural, como alguien del barrio (nivel 7/10) pero sin groserías. Tuteas siempre. Usas expresiones mexicanas como "ya checé", "órale", "¡sale!", "compa", "ya quedó". Eres directo y amigable. Conservas todos los datos importantes (fechas, nombres, horas, proyectos) pero con lenguaje humano y cálido.`;
 
-        const promptAprendizaje = `${personalidad}\n\nTransforma este mensaje automático a un mensaje WhatsApp más humano y natural (máximo 300 caracteres si es posible, usa saltos de línea con \\n):\n\n"${texto}"\n\nAdemás, al final de tu respuesta escribe en una nueva línea que empiece exactamente con "REGLA:" una instrucción corta (máximo 2 oraciones) de cómo deberías transformar mensajes de este tipo en el futuro.`;
+        const promptAprendizaje = `${personalidad}\n\nTransforma este mensaje automático a un mensaje WhatsApp más humano y natural (máximo 400 caracteres si es posible, usa saltos de línea con \\n). Es vital que mantengas intactas las opciones de respuesta ("ACEPTAR" o "RECHAZAR") y cualquier información crítica sobre el vehículo:\n\n"${texto}"\n\nAdemás, al final de tu respuesta escribe en una nueva línea que empiece exactamente con "REGLA:" una instrucción corta (máximo 2 oraciones) de cómo deberías transformar mensajes de este tipo en el futuro, recordando siempre mantener las opciones de ACEPTAR/RECHAZAR.`;
 
         const result = await aiModel.generateContent(promptAprendizaje);
         const respuestaCompleta = result.response.text();
@@ -98,7 +98,7 @@ app.post('/api/bot/humanize', verifyToken, async (req, res) => {
                     instruccionAprendida: instruccion,
                     vecesUsado: 1
                 },
-                { upsert: true, new: true }
+                { upsert: true, returnDocument: 'after' }
             );
             console.log(`💾 [APRENDIZAJE] Regla guardada para tipo "${tipo}". ¡Ya no necesitaré aprender esto de nuevo!`);
         }
@@ -226,7 +226,7 @@ app.post('/api/bot/analyze', verifyToken, async (req, res) => {
                 await BotMemoria.findOneAndUpdate(
                     { clave: claveMemoria },
                     { clave: claveMemoria, respuesta: respuestaFluida, fechaUltimoUso: new Date() },
-                    { upsert: true, new: true }
+                    { upsert: true, returnDocument: 'after' }
                 );
                 console.log(`\ud83d\udcbe [MEMORIA] Nueva respuesta guardada para futuros usos.`);
             } catch (saveErr) {
