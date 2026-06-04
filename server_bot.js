@@ -42,27 +42,86 @@ app.post('/api/bot/execute', verifyToken, (req, res) => {
 // HUMANIZADOR: Convierte mensajes robóticos en lenguaje fluido
 // Y aprende para no depender de Gemini en el futuro
 // ============================================================
+
+// --- Pools de variabilidad para el humanizador ---
+const TONOS_HUMANIZADOR = [
+    'muy relajado y con un toque de humor ligero',
+    'directo y sin rodeos pero amigable',
+    'entusiasta y motivador como si fuera buena noticia',
+    'tranquilo y de confianza, como un compa de confianza',
+    'eficiente pero cálido, al grano pero sin ser frío',
+    'natural y espontáneo, como si lo estuvieras escribiendo tú mismo en ese momento'
+];
+
+const EXTRAS_HUMANIZADOR = [
+    'usa un emoji diferente al que normalmente usarías al inicio',
+    'empieza con una expresión mexicana diferente a "órale" o "sale"',
+    'varía el saludo inicial, no uses siempre el mismo',
+    'menciona el nombre de la persona de forma diferente al inicio',
+    'añade una frase corta de aliento al final antes de la firma'
+];
+
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
 app.post('/api/bot/humanize', verifyToken, async (req, res) => {
-    const { texto, tipo } = req.body;
+    const { texto, tipo, genero } = req.body;
     // tipo = clave del tipo de mensaje: 'tarea_encargado', 'tarea_acompanante', 'recordatorio', 'vehiculo', etc.
+    // genero = 'masculino' | 'femenino'
     if (!texto || !tipo) return res.json({ humanizado: texto });
 
-    console.log(`\n✍️  [HUMANIZADOR] Tipo: "${tipo}" - Procesando mensaje...`);
+    console.log(`\n✍️  [HUMANIZADOR] Tipo: "${tipo}" | Género: "${genero || 'masculino'}" - Procesando mensaje...`);
+
+    // Instrucción de género para el prompt
+    const generoDetectado = (genero === 'femenino') ? 'femenino' : 'masculino';
+    const instruccionGenero = generoDetectado === 'femenino'
+        ? 'La persona que recibe este mensaje ES MUJER. Usa lenguaje femenino y expresiones apropiadas ("comadre", "échale ganas", "ya quedó", "ánimo"). EVITA expresiones masculinas como "carnal", "compa" o "mano".'
+        : 'La persona que recibe este mensaje ES HOMBRE. Puedes usar expresiones como "compa", "carnal", "mano", "órale", "sale".';
+    const tonoRandom  = pick(TONOS_HUMANIZADOR);
+    const extraRandom = pick(EXTRAS_HUMANIZADOR);
+    const horaActual  = new Date().toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit' });
 
     // ====================================================
     // PASO 1: ¿Ya aprendimos cómo humanizar este tipo?
+    //         Si sí, usamos la regla aprendida PERO le
+    //         inyectamos variabilidad para que no repita.
     // ====================================================
     try {
         const estiloAprendido = await BotEstilo.findOne({ tipo });
         if (estiloAprendido && estiloAprendido.instruccionAprendida) {
-            console.log(`🎓 [APRENDIDO] Tengo el patrón para "${tipo}". Sin llamar a Gemini.`);
+            console.log(`🎓 [APRENDIDO] Tengo el patrón para "${tipo}". Aplicando variabilidad...`);
 
-            // Usamos Gemini pero con las instrucciones YA APRENDIDAS (mucho más rápido y barato)
-            const promptRapido = `${estiloAprendido.instruccionAprendida}\n\nTransforma este mensaje siguiendo exactamente ese estilo:\n"${texto}"`;
-            const result = await aiModel.generateContent(promptRapido);
+            // Obtener últimas frases usadas para evitar repetición
+            const ultimasFrases = estiloAprendido.ultimasFrases || [];
+            const antiRepeticion = ultimasFrases.length > 0
+                ? `\n\n🚫 PROHIBIDO: No uses ninguna de estas frases de inicio que ya usaste antes: [${ultimasFrases.join(' | ')}]. Sé creativo y diferente.`
+                : '';
+
+            // Prompt enriquecido con variabilidad controlada Y género
+            const promptVariado = `${estiloAprendido.instruccionAprendida}
+
+🚻 GÉNERO DEL DESTINATARIO: ${instruccionGenero}
+
+🎨 VARIACIÓN OBLIGATORIA PARA ESTA ENTREGA:
+- Tono esta vez: ${tonoRandom}
+- Variación extra: ${extraRandom}
+- La hora actual en México es: ${horaActual} (adáptate si aplica, ej: si es noche saluda diferente)${antiRepeticion}
+
+Transforma este mensaje con esa variación aplicada, manteniendo todos los datos importantes:
+"${texto}"`;
+
+            const result = await aiModel.generateContent(promptVariado);
             const textoHumanizado = result.response.text();
 
-            await BotEstilo.updateOne({ tipo }, { $inc: { vecesUsado: 1 } });
+            // Extraer frase de inicio del resultado para el mini-historial anti-repetición
+            const primeraLinea = textoHumanizado.split('\n')[0].substring(0, 60).trim();
+            const nuevasFrases = [primeraLinea, ...ultimasFrases].slice(0, 4); // guardar últimas 4
+
+            await BotEstilo.updateOne(
+                { tipo },
+                { $inc: { vecesUsado: 1 }, ultimasFrases: nuevasFrases }
+            );
+
+            console.log(`🎨 [VARIABILIDAD] Tono: "${tonoRandom}" | Extra: "${extraRandom}"`);
             return res.json({ humanizado: textoHumanizado, fuenteAprendida: true });
         }
     } catch (err) {
@@ -76,7 +135,7 @@ app.post('/api/bot/humanize', verifyToken, async (req, res) => {
     try {
         const personalidad = `Eres el asistente del sistema Naisata CRM. Hablas relajado y natural, como alguien del barrio (nivel 7/10) pero sin groserías. Tuteas siempre. Usas expresiones mexicanas como "ya checé", "órale", "¡sale!", "compa", "ya quedó". Eres directo y amigable. Conservas todos los datos importantes (fechas, nombres, horas, proyectos) pero con lenguaje humano y cálido.`;
 
-        const promptAprendizaje = `${personalidad}\n\nTransforma este mensaje automático a un mensaje WhatsApp más humano y natural (máximo 400 caracteres). ES CRÍTICO Y OBLIGATORIO: 1) Usar saltos de línea con \\n para separar las ideas. 2) Mantener intactos los listados separando claramente en líneas distintas a los acompañantes, vehículos y proyectos, nunca los juntes en un solo párrafo. 3) Mantener las opciones de respuesta como "ACEPTAR" / "RECHAZAR":\n\n"${texto}"\n\nAdemás, al final de tu respuesta escribe en una nueva línea que empiece exactamente con "REGLA:" una instrucción de cómo deberías transformar mensajes de este tipo en el futuro, recordando siempre separar la información de listas y personas en múltiples renglones.`;
+        const promptAprendizaje = `${personalidad}\n\n🚻 GÉNERO DEL DESTINATARIO: ${instruccionGenero}\n\nTransforma este mensaje automático a un mensaje WhatsApp más humano y natural (máximo 400 caracteres). ES CRÍTICO Y OBLIGATORIO: 1) Usar saltos de línea con \\n para separar las ideas. 2) Mantener intactos los listados separando claramente en líneas distintas a los acompañantes, vehículos y proyectos, nunca los juntes en un solo párrafo. 3) Mantener las opciones de respuesta como "ACEPTAR" / "RECHAZAR":\n\n"${texto}"\n\nAdemás, al final de tu respuesta escribe en una nueva línea que empiece exactamente con "REGLA:" una instrucción de cómo deberías transformar mensajes de este tipo en el futuro, recordando siempre separar la información de listas y personas en múltiples renglones.`;
 
         const result = await aiModel.generateContent(promptAprendizaje);
         const respuestaCompleta = result.response.text();

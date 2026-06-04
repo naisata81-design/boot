@@ -50,6 +50,7 @@ const BotEstiloSchema = new mongoose.Schema({
     ejemploHumanizado: String,            // Cómo lo transformó Gemini
     instruccionAprendida: String,         // Reglas que el bot extrae para replicarlo solo
     vecesUsado: { type: Number, default: 0 },
+    ultimasFrases: { type: [String], default: [] }, // Mini-historial de frases de inicio usadas (máx 4)
     fechaAprendizaje: { type: Date, default: Date.now }
 });
 const BotEstilo = mongoose.model('BotEstilo', BotEstiloSchema);
